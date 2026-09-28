@@ -46,7 +46,7 @@ namespace ChatSystem
             using (var req = UnityWebRequest.Get(MessagesUrl))
             {
                 req.timeout = timeoutSeconds;
-                req.SetRequestHeader("Accept", "application/json");
+                req.SetRequestHeader("Accept", "application/json; charset=utf-8");
                 yield return req.SendWebRequest();
 
                 if (req.result != UnityWebRequest.Result.Success)
@@ -56,7 +56,8 @@ namespace ChatSystem
                 }
 
                 List<ChatMessage> list;
-                try { list = ParseMessages(req.downloadHandler.text); }
+                // 한글이 깨지지 않도록 응답 바이트를 항상 UTF-8로 디코딩
+                try { list = ParseMessages(Encoding.UTF8.GetString(req.downloadHandler.data ?? new byte[0])); }
                 catch (Exception e)
                 {
                     if (onError != null) onError("응답 파싱 실패: " + e.Message);

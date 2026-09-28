@@ -40,13 +40,9 @@ namespace ChatSystem
         public Color otherNameColor = new Color(1f, 0.85f, 0.4f);
         public Color errorColor = new Color(1f, 0.45f, 0.45f);
 
-        [Header("Font")]
-        [Tooltip("기본 TMP 폰트(LiberationSans)에 없는 한글을 표시하기 위한 OS 폰트 폴백")]
-        public string osFallbackFontFamily = "Malgun Gothic";
-
         readonly List<ChatMessage> _messages = new List<ChatMessage>();
         string _status = "";
-        bool _sendQueued;
+        int _sendQueuedFrame = -1;
         bool _sending;
         bool _fetching;
         bool _fetchAgain;
@@ -56,11 +52,11 @@ namespace ChatSystem
             if (string.IsNullOrEmpty(userName)) userName = "User" + Random.Range(1000, 10000);
             if (api == null) api = GetComponent<ChatApiClient>();
 
-            SetupFontFallback();
-
             inputField.lineType = TMP_InputField.LineType.MultiLineNewline;
             inputField.textComponent.textWrappingMode = TextWrappingModes.Normal;
             inputField.onValidateInput = ValidateInput;
+            inputField.onSelect.AddListener(_ => EnableIme(true));
+            inputField.onDeselect.AddListener(_ => EnableIme(false));
             sendButton.onClick.AddListener(Send);
 
             messagesText.textWrappingMode = TextWrappingModes.Normal;
@@ -81,9 +77,10 @@ namespace ChatSystem
 
         void LateUpdate()
         {
-            if (_sendQueued)
+            // Enter 입력 후 최소 한 프레임 뒤, 한글 IME 조합이 확정된 뒤에 전송
+            if (_sendQueuedFrame >= 0 && Time.frameCount > _sendQueuedFrame && !IsImeComposing())
             {
-                _sendQueued = false;
+                _sendQueuedFrame = -1;
                 Send();
             }
         }
@@ -95,7 +92,7 @@ namespace ChatSystem
             if (addedChar == '\n' || addedChar == '\r')
             {
                 if (IsShiftHeld()) return '\n'; // Shift+Enter → 줄바꿈
-                _sendQueued = true;            // Enter → 전송 (IME 조합 확정 후 처리하도록 한 프레임 늦춤)
+                _sendQueuedFrame = Time.frameCount; // Enter → 전송 (IME 조합 확정 후 LateUpdate에서 처리)
                 return '\0';
             }
             return addedChar;
@@ -111,6 +108,27 @@ namespace ChatSystem
             if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) return true;
 #endif
             return false;
+        }
+
+        static bool IsImeComposing()
+        {
+#if ENABLE_LEGACY_INPUT_MANAGER
+            return !string.IsNullOrEmpty(Input.compositionString);
+#else
+            return false;
+#endif
+        }
+
+        static void EnableIme(bool on)
+        {
+            // 입력 박스가 활성화되면 한글 IME 조합 입력을 켭니다
+#if ENABLE_LEGACY_INPUT_MANAGER
+            Input.imeCompositionMode = on ? IMECompositionMode.On : IMECompositionMode.Auto;
+#endif
+#if ENABLE_INPUT_SYSTEM
+            var kb = UnityEngine.InputSystem.Keyboard.current;
+            if (kb != null) kb.SetIMEEnabled(on);
+#endif
         }
 
         public void Send()
@@ -243,33 +261,6 @@ namespace ChatSystem
         {
             // 사용자가 입력한 <, > 등이 리치 텍스트 태그로 해석되지 않도록 처리
             return "<noparse>" + (s ?? "").Replace("</noparse>", "</no parse>") + "</noparse>";
-        }
-
-        // ---------------- 폰트 ----------------
-
-        TMP_FontAsset _patchedFont;
-        TMP_FontAsset _osFont;
-
-        void SetupFontFallback()
-        {
-            TMP_FontAsset baseFont = messagesText.font;
-            if (baseFont == null || string.IsNullOrEmpty(osFallbackFontFamily)) return;
-
-            try { _osFont = TMP_FontAsset.CreateFontAsset(osFallbackFontFamily, "Regular"); }
-            catch (System.Exception ex) { Debug.LogWarning("[Chat] OS 폰트 폴백 생성 실패: " + ex.Message); }
-            if (_osFont == null) { Debug.LogWarning("[Chat] OS 폰트를 찾지 못했습니다: " + osFallbackFontFamily); return; }
-
-            // 기본 폰트의 폴백 목록에 런타임으로만 추가하고, OnDestroy에서 되돌립니다 (에셋 파일은 변경되지 않음)
-            if (baseFont.fallbackFontAssetTable == null) baseFont.fallbackFontAssetTable = new List<TMP_FontAsset>();
-            baseFont.fallbackFontAssetTable.Insert(0, _osFont);
-            _patchedFont = baseFont;
-        }
-
-        void OnDestroy()
-        {
-            if (_patchedFont != null && _patchedFont.fallbackFontAssetTable != null)
-                _patchedFont.fallbackFontAssetTable.Remove(_osFont);
-            if (_osFont != null) Destroy(_osFont);
         }
     }
 }
