@@ -12,7 +12,8 @@ namespace ChatSystem
     /// 채팅 UI 컨트롤러
     ///  - 최신 N개(기본 10개) 메시지 표시, 가로 초과 시 자동 줄바꿈
     ///  - Enter: 전송 / Shift+Enter: 줄바꿈
-    ///  - 조회 시점: 씬 시작 시, 내 메시지 전송 직후
+    ///  - 조회 시점: 씬 시작 시, 내 메시지 전송 직후, 그리고 pollInterval초마다 자동(폴링)
+    ///  - 폴링은 afterId(마지막으로 받은 id) 이후의 새 메시지만 받아 목록 뒤에 붙입니다
     /// </summary>
     public class ChatUIController : MonoBehaviour
     {
@@ -28,6 +29,12 @@ namespace ChatSystem
         [Tooltip("비워두면 실행 시 User#### 형태로 자동 생성")]
         public string userName = "";
         public int maxMessages = 10;
+
+        [Header("Polling (새 메시지 자동 수신)")]
+        [Tooltip("새 메시지를 확인하는 간격(초). 0 이하면 자동 수신 끔")]
+        public float pollInterval = 2f;
+        [Tooltip("폴링 N회마다 한 번은 전체 목록을 다시 받아 동기화 (서버/Redis 초기화 대비)")]
+        public int fullSyncEveryPolls = 15;
 
         [Header("Input Box")]
         [Tooltip("입력 박스 기본 높이 (54pt x 1.5)")]
@@ -46,6 +53,9 @@ namespace ChatSystem
         bool _sending;
         bool _fetching;
         bool _fetchAgain;
+        long _lastId = -1;      // 마지막으로 받은 메시지 id (-1: 아직 없음 → 전체 조회)
+        float _nextPollTime;
+        int _pollCount;
 
         void Awake()
         {
@@ -73,6 +83,17 @@ namespace ChatSystem
         void Update()
         {
             UpdateInputHeight();
+
+            if (pollInterval > 0f && Time.unscaledTime >= _nextPollTime)
+            {
+                _nextPollTime = Time.unscaledTime + pollInterval;
+                if (!_fetching) // 이미 조회 중이면 이번 폴링은 건너뜀
+                {
+                    _pollCount++;
+                    bool fullSync = fullSyncEveryPolls > 0 && _pollCount % fullSyncEveryPolls == 0;
+                    RequestFetch(fullSync);
+                }
+            }
         }
 
         void LateUpdate()
@@ -147,6 +168,7 @@ namespace ChatSystem
                     _sending = false;
                     sendButton.interactable = true;
                     _status = "";
+                    _stickToBottom = true; // 내가 보낸 메시지는 항상 보이도록
                     RequestFetch();
                 },
                 err =>
@@ -180,8 +202,13 @@ namespace ChatSystem
 
         // ---------------- 조회/표시 ----------------
 
-        public void RequestFetch()
+        bool _fullSyncRequested;
+        bool _stickToBottom = true;
+
+        /// <param name="fullSync">true면 최신 목록 전체를 다시 받고, false면 마지막 id 이후 새 메시지만 받습니다</param>
+        public void RequestFetch(bool fullSync = false)
         {
+            if (fullSync) _fullSyncRequested = true;
             if (_fetching) { _fetchAgain = true; return; }
             StartCoroutine(FetchRoutine());
         }
@@ -192,19 +219,76 @@ namespace ChatSystem
             do
             {
                 _fetchAgain = false;
-                yield return api.FetchMessages(OnMessagesReceived, SetError);
+                bool full = _fullSyncRequested || _lastId < 0;
+                _fullSyncRequested = false;
+
+                if (full)
+                    yield return api.FetchMessages(-1, maxMessages, OnFullListReceived, SetError);
+                else
+                    yield return api.FetchMessages(_lastId, 0, OnNewMessagesReceived, SetError);
             } while (_fetchAgain);
             _fetching = false;
         }
 
-        void OnMessagesReceived(List<ChatMessage> list)
+        /// 전체 목록으로 교체 (시작 시 / 주기적 동기화)
+        void OnFullListReceived(List<ChatMessage> list)
         {
-            _status = "";
+            bool statusChanged = ClearStatus();
+            var sorted = SortOldestFirst(list).ToList();
+            if (!statusChanged && SameIds(sorted, _messages)) return; // 바뀐 게 없으면 다시 그리지 않음
+
             _messages.Clear();
-            _messages.AddRange(SortOldestFirst(list));
+            _messages.AddRange(sorted);
+            TrimToMax();
+            _lastId = MaxId(_messages);
+            Render();
+        }
+
+        /// afterId 이후 새 메시지만 목록 뒤에 추가 (폴링 / 전송 직후)
+        void OnNewMessagesReceived(List<ChatMessage> list)
+        {
+            bool statusChanged = ClearStatus();
+            bool added = false;
+            foreach (var m in SortOldestFirst(list))
+            {
+                long id;
+                if (long.TryParse(m.id, out id) && id <= _lastId) continue; // 이미 받은 메시지
+                _messages.Add(m);
+                if (id > _lastId) _lastId = id;
+                added = true;
+            }
+            if (!added && !statusChanged) return;
+            TrimToMax();
+            Render();
+        }
+
+        bool ClearStatus()
+        {
+            if (string.IsNullOrEmpty(_status)) return false;
+            _status = "";
+            return true;
+        }
+
+        void TrimToMax()
+        {
             if (_messages.Count > maxMessages)
                 _messages.RemoveRange(0, _messages.Count - maxMessages); // 최신 N개만 유지
-            Render();
+        }
+
+        static long MaxId(List<ChatMessage> list)
+        {
+            long max = -1, id;
+            foreach (var m in list)
+                if (long.TryParse(m.id, out id) && id > max) max = id;
+            return max;
+        }
+
+        static bool SameIds(List<ChatMessage> a, List<ChatMessage> b)
+        {
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+                if (a[i].id != b[i].id) return false;
+            return true;
         }
 
         static IEnumerable<ChatMessage> SortOldestFirst(List<ChatMessage> list)
@@ -219,6 +303,7 @@ namespace ChatSystem
 
         void SetError(string err)
         {
+            if (err == _status) return; // 폴링 중 같은 오류가 반복되면 로그/화면 갱신 생략
             Debug.LogWarning("[Chat] " + err);
             _status = err;
             Render();
@@ -226,6 +311,14 @@ namespace ChatSystem
 
         void Render()
         {
+            // 사용자가 위로 스크롤해서 이전 메시지를 보고 있으면 자동으로 끌어내리지 않음
+            bool atBottom = messagesScroll == null
+                || messagesScroll.content == null || messagesScroll.viewport == null
+                || messagesScroll.content.rect.height <= messagesScroll.viewport.rect.height + 1f // 아직 스크롤할 만큼 길지 않음
+                || messagesScroll.verticalNormalizedPosition <= 0.01f;
+            bool scrollDown = atBottom || _stickToBottom;
+            _stickToBottom = false;
+
             var sb = new StringBuilder();
             string myHex = ColorUtility.ToHtmlStringRGB(myNameColor);
             string otherHex = ColorUtility.ToHtmlStringRGB(otherNameColor);
@@ -250,7 +343,7 @@ namespace ChatSystem
             messagesText.text = sb.ToString();
 
             // 최신 메시지가 보이도록 아래로 스크롤
-            if (messagesScroll != null)
+            if (messagesScroll != null && scrollDown)
             {
                 Canvas.ForceUpdateCanvases();
                 messagesScroll.verticalNormalizedPosition = 0f;

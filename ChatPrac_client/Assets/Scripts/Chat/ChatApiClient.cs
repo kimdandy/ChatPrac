@@ -19,7 +19,7 @@ namespace ChatSystem
 
     /// <summary>
     /// Spring 채팅 API 클라이언트
-    ///  - 조회: GET  {baseUrl}/api/rooms/{roomId}/messages
+    ///  - 조회: GET  {baseUrl}/api/rooms/{roomId}/messages[?limit=N][&afterId=ID]
     ///  - 전송: POST {baseUrl}/api/rooms/{roomId}/messages
     /// </summary>
     public class ChatApiClient : MonoBehaviour
@@ -43,7 +43,20 @@ namespace ChatSystem
 
         public IEnumerator FetchMessages(Action<List<ChatMessage>> onSuccess, Action<string> onError)
         {
-            using (var req = UnityWebRequest.Get(MessagesUrl))
+            return FetchMessages(-1, 0, onSuccess, onError);
+        }
+
+        /// <param name="afterId">0 이상이면 이 id 이후의 새 메시지만 조회 (폴링용), 음수면 최신 메시지 조회</param>
+        /// <param name="limit">가져올 최대 개수 (0 이하면 서버 기본값)</param>
+        public IEnumerator FetchMessages(long afterId, int limit, Action<List<ChatMessage>> onSuccess, Action<string> onError)
+        {
+            string url = MessagesUrl;
+            var query = new List<string>();
+            if (limit > 0) query.Add("limit=" + limit.ToString(CultureInfo.InvariantCulture));
+            if (afterId >= 0) query.Add("afterId=" + afterId.ToString(CultureInfo.InvariantCulture));
+            if (query.Count > 0) url += "?" + string.Join("&", query.ToArray());
+
+            using (var req = UnityWebRequest.Get(url))
             {
                 req.timeout = timeoutSeconds;
                 req.SetRequestHeader("Accept", "application/json; charset=utf-8");
