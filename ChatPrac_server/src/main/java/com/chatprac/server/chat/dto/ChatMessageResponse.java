@@ -1,21 +1,24 @@
 package com.chatprac.server.chat.dto;
 
 import com.chatprac.server.chat.ChatMessage;
+import com.chatprac.server.chat.MessageType;
 
 import java.time.LocalDateTime;
 
 /**
- * 응답 JSON: {"id":1,"sender":"User1234","content":"안녕하세요","createdAt":"2026-09-29T14:03:12.345"}
- * 필드 이름은 Unity ChatApiClient의 idField / senderField / contentField / createdAtField 기본값과 같습니다.
+ * 메시지 전송 응답 (POST /api/v1/rooms/{roomId}/messages → 201)
+ * {"messageId":100,"userId":1,"nickname":"철수","message":"2번이 마피아 같은데?","createdAt":"2026-09-28T01:10:00","type":"USER"}
+ * type은 명세 추가 필드: USER(일반) / SYSTEM(시스템 메시지, userId = null)
  */
 public record ChatMessageResponse(
-        Long id,
-        String roomId,
-        String sender,
-        String content,
-        LocalDateTime createdAt
+        Long messageId,
+        Long userId,
+        String nickname,
+        String message,
+        LocalDateTime createdAt,
+        MessageType type
 ) {
     public static ChatMessageResponse from(ChatMessage m) {
-        return new ChatMessageResponse(m.id(), m.roomId(), m.sender(), m.content(), m.createdAt());
+        return new ChatMessageResponse(m.id(), m.userId(), m.nickname(), m.message(), m.createdAt(), m.type());
     }
 }

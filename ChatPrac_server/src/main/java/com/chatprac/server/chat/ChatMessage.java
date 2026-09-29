@@ -4,16 +4,24 @@ import java.time.LocalDateTime;
 
 /**
  * 채팅 메시지. Redis에 JSON 문자열로 저장됩니다.
- * Unity 클라이언트(ChatApiClient)가 사용하는 필드: id, sender, content, createdAt
+ * nickname은 보낸 시점의 닉네임을 함께 저장합니다.
+ * 시스템 메시지(입장/퇴장 알림, 공지)는 userId가 null 입니다.
  */
 public record ChatMessage(
         Long id,
-        String roomId,
-        String sender,
-        String content,
+        Long roomId,
+        MessageType type,
+        Long userId,
+        String nickname,
+        String message,
         LocalDateTime createdAt
 ) {
-    public static final int MAX_ROOM_ID_LENGTH = 50;
-    public static final int MAX_SENDER_LENGTH = 50;
-    public static final int MAX_CONTENT_LENGTH = 1000;
+    public static final int MAX_MESSAGE_LENGTH = 1000;
+
+    /** 시스템 메시지의 nickname 값 */
+    public static final String SYSTEM_NICKNAME = "SYSTEM";
+
+    public ChatMessage {
+        if (type == null) type = MessageType.USER;
+    }
 }

@@ -14,8 +14,9 @@ import java.util.Set;
 
 /**
  * Redis 저장 구조 (roomId = 1 인 경우)
- *  - chat:room:1:seq       (String)     메시지 id 발급용 카운터 (INCR)
- *  - chat:room:1:messages  (Sorted Set) score = 메시지 id, member = 메시지 JSON
+ *  - chat:v1:room:1:seq       (String)     메시지 id(messageId) 발급용 카운터 (INCR)
+ *  - chat:v1:room:1:messages  (Sorted Set) score = 메시지 id, member = 메시지 JSON
+ *  (v1 API로 바뀌면서 예전 형식 데이터와 섞이지 않도록 키 앞에 chat:v1 을 붙였습니다)
  *
  * Sorted Set을 쓰면 "최신 N개"와 "id 이후 새 메시지"를 둘 다 빠르게 꺼낼 수 있습니다.
  * 방마다 최신 chat.max-messages-per-room 개만 남기고 오래된 메시지는 지웁니다.
@@ -23,7 +24,7 @@ import java.util.Set;
 @Repository
 public class RedisChatMessageRepository implements ChatMessageRepository {
 
-    private static final String KEY_PREFIX = "chat:room:";
+    private static final String KEY_PREFIX = "chat:v1:room:";
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
@@ -37,18 +38,18 @@ public class RedisChatMessageRepository implements ChatMessageRepository {
         this.maxMessagesPerRoom = maxMessagesPerRoom;
     }
 
-    private static String messagesKey(String roomId) {
+    private static String messagesKey(long roomId) {
         return KEY_PREFIX + roomId + ":messages";
     }
 
-    private static String seqKey(String roomId) {
+    private static String seqKey(long roomId) {
         return KEY_PREFIX + roomId + ":seq";
     }
 
     @Override
-    public ChatMessage save(String roomId, String sender, String content) {
+    public ChatMessage save(long roomId, MessageType type, Long userId, String nickname, String text) {
         Long id = redis.opsForValue().increment(seqKey(roomId));
-        ChatMessage message = new ChatMessage(id, roomId, sender, content, LocalDateTime.now());
+        ChatMessage message = new ChatMessage(id, roomId, type, userId, nickname, text, LocalDateTime.now());
 
         String key = messagesKey(roomId);
         redis.opsForZSet().add(key, toJson(message), id);
@@ -61,7 +62,7 @@ public class RedisChatMessageRepository implements ChatMessageRepository {
     }
 
     @Override
-    public List<ChatMessage> findLatest(String roomId, int limit) {
+    public List<ChatMessage> findLatest(long roomId, int limit) {
         Set<String> jsons = redis.opsForZSet().reverseRange(messagesKey(roomId), 0, limit - 1L);
         List<ChatMessage> result = parseAll(jsons);
         Collections.reverse(result); // 최신순 → 오래된 순
@@ -69,7 +70,7 @@ public class RedisChatMessageRepository implements ChatMessageRepository {
     }
 
     @Override
-    public List<ChatMessage> findAfter(String roomId, long afterId, int limit) {
+    public List<ChatMessage> findAfter(long roomId, long afterId, int limit) {
         Set<String> jsons = redis.opsForZSet().rangeByScore(
                 messagesKey(roomId), afterId + 1, Double.POSITIVE_INFINITY, 0, limit);
         return parseAll(jsons);

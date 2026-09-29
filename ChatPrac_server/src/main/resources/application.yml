@@ -21,6 +21,8 @@ spring:
 chat:
   # 방마다 Redis에 남겨둘 최대 메시지 수 (초과분은 오래된 것부터 삭제, 0이면 제한 없음)
   max-messages-per-room: 1000
+  # 공지 API(system-messages) 보호용 키. 비워두면 누구나 공지 가능 (연습용)
+  admin-key: ${CHAT_ADMIN_KEY:}
 
 logging:
   level:

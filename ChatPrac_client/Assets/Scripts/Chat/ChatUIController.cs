@@ -14,6 +14,8 @@ namespace ChatSystem
     ///  - Enter: 전송 / Shift+Enter: 줄바꿈
     ///  - 조회 시점: 씬 시작 시, 내 메시지 전송 직후, 그리고 pollInterval초마다 자동(폴링)
     ///  - 폴링은 afterId(마지막으로 받은 id) 이후의 새 메시지만 받아 목록 뒤에 붙입니다
+    ///  - 시작 시 방 참가(개발용) → 서버가 만든 시스템 메시지(입장·퇴장 알림, 공지)는 녹색으로 표시
+    ///  - 내 메시지 구분은 userId로 (닉네임은 서버가 userId로 찾아서 붙여줌)
     /// </summary>
     public class ChatUIController : MonoBehaviour
     {
@@ -26,8 +28,10 @@ namespace ChatSystem
         public LayoutElement inputBoxLayout;
 
         [Header("Chat")]
-        [Tooltip("비워두면 실행 시 User#### 형태로 자동 생성")]
-        public string userName = "";
+        [Tooltip("내 userId (서버의 POST /api/v1/users 로 만든 유저)")]
+        public long userId = 1;
+        [Tooltip("[개발용] 시작할 때 방에 자동으로 참가 (POST /api/v1/rooms/{roomId}/members)")]
+        public bool autoJoinRoom = true;
         public int maxMessages = 10;
 
         [Header("Polling (새 메시지 자동 수신)")]
@@ -46,6 +50,10 @@ namespace ChatSystem
         public Color myNameColor = new Color(0.45f, 0.8f, 1f);
         public Color otherNameColor = new Color(1f, 0.85f, 0.4f);
         public Color errorColor = new Color(1f, 0.45f, 0.45f);
+        [Tooltip("시스템 메시지(입장 알림, 공지) 색")]
+        public Color systemColor = new Color(0.4f, 0.9f, 0.45f);
+        [Tooltip("시스템 메시지 앞에 붙는 말머리")]
+        public string systemPrefix = "[시스템] ";
 
         readonly List<ChatMessage> _messages = new List<ChatMessage>();
         string _status = "";
@@ -56,11 +64,15 @@ namespace ChatSystem
         long _lastId = -1;      // 마지막으로 받은 메시지 id (-1: 아직 없음 → 전체 조회)
         float _nextPollTime;
         int _pollCount;
+        bool _joined;
+        bool _joining;
+        bool _joinErrorLogged;
+        string _joinError = "";   // 유저/방이 없는 등 재시도해도 안 되는 참가 오류 (화면에 계속 표시)
 
         void Awake()
         {
-            if (string.IsNullOrEmpty(userName)) userName = "User" + Random.Range(1000, 10000);
             if (api == null) api = GetComponent<ChatApiClient>();
+            if (!autoJoinRoom) _joined = true;
 
             inputField.lineType = TMP_InputField.LineType.MultiLineNewline;
             inputField.textComponent.textWrappingMode = TextWrappingModes.Normal;
@@ -76,6 +88,7 @@ namespace ChatSystem
         void Start()
         {
             Render();
+            TryJoin();
             RequestFetch();
             inputField.ActivateInputField();
         }
@@ -87,6 +100,8 @@ namespace ChatSystem
             if (pollInterval > 0f && Time.unscaledTime >= _nextPollTime)
             {
                 _nextPollTime = Time.unscaledTime + pollInterval;
+                if (!_joined) TryJoin(); // 시작할 때 서버가 꺼져 있었다면 연결되면 다시 입장 시도
+
                 if (!_fetching) // 이미 조회 중이면 이번 폴링은 건너뜀
                 {
                     _pollCount++;
@@ -162,7 +177,7 @@ namespace ChatSystem
             inputField.text = "";
             FocusInput();
 
-            StartCoroutine(api.PostMessage(userName, text,
+            StartCoroutine(api.PostMessage(userId, text,
                 () =>
                 {
                     _sending = false;
@@ -198,6 +213,37 @@ namespace ChatSystem
             float target = baseInputHeight + (Mathf.Min(lines, maxVisibleInputLines) - 1) * lineH;
             if (!Mathf.Approximately(inputBoxLayout.preferredHeight, target))
                 inputBoxLayout.preferredHeight = target;
+        }
+
+        // ---------------- 입장 ----------------
+
+        void TryJoin()
+        {
+            if (_joined || _joining) return;
+            _joining = true;
+            StartCoroutine(api.JoinRoom(userId,
+                () =>
+                {
+                    _joining = false;
+                    _joined = true;
+                    if (!string.IsNullOrEmpty(_joinError)) { _joinError = ""; Render(); }
+                    RequestFetch(); // 서버가 만든 입장 알림을 바로 받아오기
+                },
+                (err, code) =>
+                {
+                    _joining = false;
+                    if (code >= 400 && code < 500)
+                    {
+                        // 404(유저/방 없음) 등은 다시 시도해도 같으므로 멈추고 화면에 계속 표시
+                        _joined = true;
+                        _joinError = err;
+                        Debug.LogWarning("[Chat] " + err);
+                        Render();
+                        return;
+                    }
+                    // 서버 연결 오류는 조회 쪽에서 화면에 표시하므로 여기서는 로그만 한 번 남기고 다음 폴링 때 재시도
+                    if (!_joinErrorLogged) { Debug.LogWarning("[Chat] " + err); _joinErrorLogged = true; }
+                }));
         }
 
         // ---------------- 조회/표시 ----------------
@@ -322,18 +368,36 @@ namespace ChatSystem
             var sb = new StringBuilder();
             string myHex = ColorUtility.ToHtmlStringRGB(myNameColor);
             string otherHex = ColorUtility.ToHtmlStringRGB(otherNameColor);
+            string systemHex = ColorUtility.ToHtmlStringRGB(systemColor);
 
             foreach (var m in _messages)
             {
                 if (sb.Length > 0) sb.Append('\n');
-                bool mine = m.sender == userName;
+
+                if (m.IsSystem)
+                {
+                    // 시스템 메시지: 말머리 + 내용 전체를 녹색으로
+                    sb.Append("<color=#").Append(systemHex).Append(">")
+                      .Append(NoParse(systemPrefix + m.content))
+                      .Append("</color>");
+                    continue;
+                }
+
+                bool mine = m.userId == userId.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 sb.Append("<color=#").Append(mine ? myHex : otherHex).Append("><b>")
-                  .Append(NoParse(string.IsNullOrEmpty(m.sender) ? "?" : m.sender))
+                  .Append(NoParse(string.IsNullOrEmpty(m.nickname) ? "?" : m.nickname))
                   .Append("</b></color>: ")
                   .Append(NoParse(m.content));
             }
 
-            if (!string.IsNullOrEmpty(_status))
+            if (!string.IsNullOrEmpty(_joinError))
+            {
+                if (sb.Length > 0) sb.Append('\n');
+                sb.Append("<color=#").Append(ColorUtility.ToHtmlStringRGB(errorColor)).Append(">")
+                  .Append(NoParse(_joinError)).Append("</color>");
+            }
+
+            if (!string.IsNullOrEmpty(_status) && _status != _joinError)
             {
                 if (sb.Length > 0) sb.Append('\n');
                 sb.Append("<color=#").Append(ColorUtility.ToHtmlStringRGB(errorColor)).Append(">")
