@@ -10,11 +10,19 @@ using UnityEngine.UI;
 /// </summary>
 public static class ChatUIBuilder
 {
-    const float FontSize = 15f;
-    const float InputHeight = FontSize * 1.5f;      // 22.5
-    const float ViewHeight = InputHeight * 10f;     // 225
-    const float BoxWidth = 400f;
-    const float SendButtonWidth = 48f;
+    // 채팅 박스: 화면 중앙, 가로·세로 각각 화면의 약 83.7%(√0.7) → 전체 면적의 70%
+    // (기준 해상도 1920x1080에서 약 1606 x 904)
+    const float AreaRatio = 0.7f;
+    // 박스·글자 크기 배율 (예전 400 x 251.5 박스 → 새 박스 높이 기준 약 3.6배)
+    const float UiScale = 3.6f;
+
+    const float FontSize = 15f * UiScale;           // 54
+    const float InputHeight = FontSize * 1.5f;      // 81
+    const float Spacing = 4f * UiScale;             // 14.4
+    const float SendButtonWidth = 48f * UiScale;    // 172.8
+    const float Pad = 6f * UiScale;                 // 21.6 (좌우 여백)
+    const float PadV = 4f * UiScale;                // 14.4 (위아래 여백)
+    const float ScrollSensitivity = 20f * UiScale;  // 72
 
     [MenuItem("Tools/Chat/Build Chat UI")]
     public static void Build()
@@ -36,35 +44,36 @@ public static class ChatUIBuilder
         scaler.referenceResolution = new Vector2(1920, 1080);
         scaler.matchWidthOrHeight = 0.5f;
 
-        // Panel (두 박스를 세로로 배치, 가로 폭 동일)
+        // Panel (두 박스를 세로로 배치, 가로 폭 동일) - 화면 중앙, 면적 70%
         var panel = CreateUI("ChatPanel", canvasGo.transform);
-        panel.anchorMin = panel.anchorMax = Vector2.zero;
-        panel.pivot = Vector2.zero;
-        panel.anchoredPosition = new Vector2(20, 20);
-        panel.sizeDelta = new Vector2(BoxWidth, ViewHeight + InputHeight + 4);
+        float side = Mathf.Sqrt(AreaRatio);             // 0.8367
+        float margin = (1f - side) * 0.5f;              // 0.0817
+        panel.anchorMin = new Vector2(margin, margin);
+        panel.anchorMax = new Vector2(1f - margin, 1f - margin);
+        panel.pivot = new Vector2(0.5f, 0.5f);
+        panel.anchoredPosition = Vector2.zero;
+        panel.sizeDelta = Vector2.zero;
         var vlg = panel.gameObject.AddComponent<VerticalLayoutGroup>();
-        vlg.spacing = 4;
+        vlg.spacing = Spacing;
         vlg.childControlWidth = true;
         vlg.childControlHeight = true;
         vlg.childForceExpandWidth = true;
         vlg.childForceExpandHeight = false;
-        var fitter = panel.gameObject.AddComponent<ContentSizeFitter>();
-        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
         // ---------- 조회 박스 ----------
         var view = CreateUI("MessageView", panel);
         view.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f);
         var viewLe = view.gameObject.AddComponent<LayoutElement>();
-        viewLe.preferredHeight = ViewHeight;
-        viewLe.minHeight = ViewHeight;
+        viewLe.minHeight = InputHeight;
+        viewLe.flexibleHeight = 1f;   // 입력 박스를 뺀 나머지 높이를 모두 사용
         var scroll = view.gameObject.AddComponent<ScrollRect>();
         scroll.horizontal = false;
         scroll.vertical = true;
         scroll.movementType = ScrollRect.MovementType.Clamped;
-        scroll.scrollSensitivity = 20f;
+        scroll.scrollSensitivity = ScrollSensitivity;
 
         var viewport = CreateUI("Viewport", view);
-        Stretch(viewport, 6, 4, 6, 4);
+        Stretch(viewport, Pad, PadV, Pad, PadV);
         viewport.gameObject.AddComponent<RectMask2D>();
 
         var content = CreateUI("Content", viewport);
@@ -97,7 +106,7 @@ public static class ChatUIBuilder
         inputLe.minHeight = InputHeight;
 
         var textArea = CreateUI("TextArea", inputBox);
-        Stretch(textArea, 6, 0, SendButtonWidth + 4, 0);
+        Stretch(textArea, Pad, 0, SendButtonWidth + Spacing, 0);
         textArea.gameObject.AddComponent<RectMask2D>();
 
         var placeholder = CreateUI("Placeholder", textArea);
@@ -135,7 +144,8 @@ public static class ChatUIBuilder
         input.customCaretColor = true;
         input.onFocusSelectAll = false;
         input.restoreOriginalTextOnEscape = false;
-        input.scrollSensitivity = 20f;
+        input.scrollSensitivity = ScrollSensitivity;
+        input.caretWidth = 3;
 
         // 전송 버튼 (입력 박스 우측 끝단)
         var btnRt = CreateUI("SendButton", inputBox);

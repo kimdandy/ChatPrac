@@ -30,8 +30,8 @@ namespace ChatSystem
         public int maxMessages = 10;
 
         [Header("Input Box")]
-        [Tooltip("입력 박스 기본 높이 (15pt x 1.5)")]
-        public float baseInputHeight = 22.5f;
+        [Tooltip("입력 박스 기본 높이 (54pt x 1.5)")]
+        public float baseInputHeight = 81f;
         [Tooltip("Shift+Enter로 줄이 늘어날 때 입력 박스가 커지는 최대 줄 수 (넘으면 박스 안에서 스크롤)")]
         public int maxVisibleInputLines = 4;
 
