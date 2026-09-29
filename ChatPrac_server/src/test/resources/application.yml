@@ -1,0 +1,3 @@
+# 테스트는 Redis 없이 메모리 저장소(InMemoryChatMessageRepository)로 실행합니다.
+chat:
+  max-messages-per-room: 1000

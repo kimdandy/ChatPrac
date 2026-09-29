@@ -1,0 +1,27 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: ChatPrac_server
+  config:
+    # Redis 비밀번호 등은 application-local.yml(깃 제외)에 따로 둘 수 있습니다.
+    import: optional:classpath:application-local.yml
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: 0
+      timeout: 2s
+
+chat:
+  # 방마다 Redis에 남겨둘 최대 메시지 수 (초과분은 오래된 것부터 삭제, 0이면 제한 없음)
+  max-messages-per-room: 1000
+
+logging:
+  level:
+    com.chatprac.server: INFO
